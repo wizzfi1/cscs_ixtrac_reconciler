@@ -5,12 +5,13 @@ from tkinterdnd2 import DND_FILES, TkinterDnD
 
 from reconcile import run_reconciliation
 from core.mapping import load_mappings
+from wizard.wizard import MappingWizard
 
 class App:
     def __init__(self, root):
         self.root = root
         self.root.title("IX TRAC Reconciler")
-        self.root.geometry("520x260")
+        self.root.geometry("520x320")
         self.root.resizable(False, False)
 
         self.file_path = tk.StringVar()
@@ -27,7 +28,16 @@ class App:
         tk.Button(frame, text="Browse", command=self.browse).pack(side=tk.LEFT)
 
         tk.Label(root, text="Select Template").pack(pady=5)
-        tk.OptionMenu(root, self.mapping_choice, *self.mappings.keys()).pack()
+
+        self.mapping_menu = tk.OptionMenu(root, self.mapping_choice, *self.mappings.keys())
+        self.mapping_menu.pack()
+
+        tk.Button(
+            root,
+            text="Add New File Format",
+            command=self.open_mapping_wizard,
+            width=25
+        ).pack(pady=5)
 
         tk.Label(root, text="Drag & drop Excel file here").pack(pady=5)
 
@@ -46,6 +56,26 @@ class App:
         f = event.data.strip("{}")
         if f.endswith(".xlsx"):
             self.file_path.set(f)
+
+    def open_mapping_wizard(self):
+        wizard = MappingWizard(self.root)
+        self.root.wait_window(wizard)
+        self.reload_mappings()
+
+    def reload_mappings(self):
+        self.mappings = load_mappings()
+
+        menu = self.mapping_menu["menu"]
+        menu.delete(0, "end")
+
+        for name in self.mappings.keys():
+            menu.add_command(
+                label=name,
+                command=lambda v=name: self.mapping_choice.set(v)
+            )
+
+        if self.mappings:
+            self.mapping_choice.set(list(self.mappings.keys())[0])
 
     def run(self):
         file = self.file_path.get()
