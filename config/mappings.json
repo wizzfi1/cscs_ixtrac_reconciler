@@ -1,0 +1,16 @@
+{
+  "IXTRAC_STANDARD": {
+    "sheet": "IX TRAC",
+    "name": "NAME",
+    "chn": "CHN",
+    "membercode_out": "MEMBERCODE",
+    "status_out": "MATCH_STATUS"
+  },
+  "IXTRAC_CLIENT_X": {
+    "sheet": "IX_TRAC_DATA",
+    "name": "CLIENT_FULL_NAME",
+    "chn": "CLIENT_CHN",
+    "membercode_out": "CSCS_CODE",
+    "status_out": "RECON_STATUS"
+  }
+}
