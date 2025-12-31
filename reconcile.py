@@ -28,10 +28,11 @@ def run_reconciliation(file_path, mapping_name):
 
     mapping = mappings[mapping_name]
 
-    # =========================
-    # PHASE 1 — ENRICH IX TRAC
-    # =========================
-    cscs = load_excel(file_path, "CSCS")
+    cscs_sheet = mapping.get("cscs_sheet") or "CSCS"
+    ixtrac_sheet = mapping.get("ixtrac_sheet") or mapping.get("sheet")
+
+    # Load CSCS source
+    cscs = load_excel(file_path, cscs_sheet)
     cscs["NORM_NAME"] = cscs["NAME"].apply(normalize_name)
     cscs["FIRST2"] = cscs["NAME"].apply(first_two_names)
 
@@ -39,10 +40,11 @@ def run_reconciliation(file_path, mapping_name):
     two_name_index = build_cscs_index_2name(cscs)
 
     wb = load_workbook(file_path)
-    sheet = wb[mapping["sheet"]]
+    sheet = wb[ixtrac_sheet]
 
     validate_mapping(sheet, mapping)
     cols = resolve_columns(sheet, mapping)
+
 
     for r in range(2, sheet.max_row + 1):
         name = sheet.cell(r, cols["name"]).value
@@ -109,7 +111,7 @@ def run_reconciliation(file_path, mapping_name):
     # =========================
     # PHASE 2 — REVIEW + SUMMARY
     # =========================
-    ix_df = pd.read_excel(output_path, sheet_name=mapping["sheet"])
+    ix_df = pd.read_excel(output_path, sheet_name=ixtrac_sheet)
     status_col = mapping["status_out"]
 
     # --- REVIEW (sorted copy) ---

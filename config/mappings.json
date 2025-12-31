@@ -1,16 +1,29 @@
 {
   "IXTRAC_STANDARD": {
-    "sheet": "IX TRAC",
+    "cscs_sheet": "CSCS",
+    "ixtrac_sheet": "IX TRAC",
     "name": "NAME",
     "chn": "CHN",
     "membercode_out": "MEMBERCODE",
     "status_out": "MATCH_STATUS"
   },
   "IXTRAC_CLIENT_X": {
-    "sheet": "IX_TRAC_DATA",
+    "cscs_sheet": "CSCS",
+    "ixtrac_sheet": "IX_TRAC_DATA",
     "name": "CLIENT_FULL_NAME",
     "chn": "CLIENT_CHN",
     "membercode_out": "CSCS_CODE",
     "status_out": "RECON_STATUS"
+  },
+  "TESTING": {
+    "sheet": null,
+    "name": "NAME",
+    "chn": "CHN",
+    "membercode_out": "Unnamed: 7",
+    "status_out": "Unnamed: 8",
+    "cscs_sheet": "CSCS",
+    "ixtrac_sheet": "IX TRAC",
+    "rules_version": "v1.0",
+    "created_at": "2025-12-31T14:23:19.278237"
   }
 }
