@@ -5,3 +5,5 @@ __pycache__
 IXTRAC_Reconciler.spec
 
 Book1.xlsx
+
+dist/
