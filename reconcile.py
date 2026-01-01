@@ -1,30 +1,56 @@
+# reconcile.py
+
 import os
 import pandas as pd
 from openpyxl import load_workbook
+from openpyxl.utils.dataframe import dataframe_to_rows
 
 from core.loader import load_excel
 from core.normalizer import normalize_name, first_two_names
 from core.matcher import build_cscs_index, build_cscs_index_2name
-from core.validator import validate_membercode
 from core.mapping import load_mappings, validate_mapping, resolve_columns
+from core.engine import match_row
+from core.duplicates import detect_duplicates
+
 from config.rules import (
-    STATUS_CONFIRMED,
-    STATUS_CONFIRMED_2NAME,
-    STATUS_AMBIGUOUS,
-    STATUS_NOT_FOUND,
     STATUS_PRIORITY,
+    STATUS_POSITION_CSCS,
+    STATUS_MORE_THAN_5,
 )
 
 
-def run_reconciliation(file_path: str, mapping_name: str):
-    """
-    Main reconciliation entry point.
-    Uses saved mapping to reconcile CSCS → IX TRAC safely.
-    """
+# =================================================
+# Helper: write DataFrame to openpyxl workbook safely
+# =================================================
+def write_df_to_sheet(wb, sheet_name, df):
+    if sheet_name in wb.sheetnames:
+        del wb[sheet_name]
+    ws = wb.create_sheet(sheet_name)
+    for row in dataframe_to_rows(df, index=False, header=True):
+        ws.append(row)
 
-    # =========================
-    # Setup
-    # =========================
+
+# =================================================
+# Helper: decide what shows in MATCH_STATUS column
+# =================================================
+def resolve_display_status(decision):
+    """
+    Certain validation failures must be visible directly
+    in the MATCH_STATUS column.
+    """
+    if decision.reason == STATUS_POSITION_CSCS:
+        return STATUS_POSITION_CSCS
+
+    if decision.reason == STATUS_MORE_THAN_5:
+        return STATUS_MORE_THAN_5
+
+    return decision.status
+
+
+# =================================================
+# Main reconciliation entry point
+# =================================================
+def run_reconciliation(file_path: str, mapping_name: str):
     os.makedirs("output", exist_ok=True)
     output_path = "output/IXTRAC_RECONCILED.xlsx"
 
@@ -34,22 +60,14 @@ def run_reconciliation(file_path: str, mapping_name: str):
 
     mapping = mappings[mapping_name]
 
-    # Sheets
-    cscs_sheet = mapping.get("cscs_sheet", "CSCS")
-    ixtrac_sheet = mapping.get("ixtrac_sheet") or mapping.get("sheet")
-
-    # Columns
+    # =================================================
+    # LOAD CSCS
+    # =================================================
+    cscs = load_excel(file_path, mapping["cscs_sheet"])
     cscs_name_col = mapping.get("cscs_name", "NAME")
 
-    # =========================
-    # Load CSCS (SOURCE)
-    # =========================
-    cscs = load_excel(file_path, cscs_sheet)
-
     if cscs_name_col not in cscs.columns:
-        raise ValueError(
-            f"CSCS name column '{cscs_name_col}' not found in sheet '{cscs_sheet}'."
-        )
+        raise ValueError("CSCS name column missing")
 
     cscs["NORM_NAME"] = cscs[cscs_name_col].apply(normalize_name)
     cscs["FIRST2"] = cscs[cscs_name_col].apply(first_two_names)
@@ -57,121 +75,88 @@ def run_reconciliation(file_path: str, mapping_name: str):
     exact_index = build_cscs_index(cscs)
     two_name_index = build_cscs_index_2name(cscs)
 
-    # =========================
-    # Load IX TRAC (TARGET)
-    # =========================
+    # =================================================
+    # CSCS DUPLICATE DETECTION
+    # =================================================
+    duplicates_df = detect_duplicates(
+        cscs,
+        ["NORM_NAME", "CHN"]
+    )
+
+    # =================================================
+    # LOAD IX TRAC (OPEN ONCE)
+    # =================================================
     wb = load_workbook(file_path)
-    if ixtrac_sheet not in wb.sheetnames:
-        raise ValueError(f"IX TRAC sheet '{ixtrac_sheet}' not found.")
+    sheet = wb[mapping["ixtrac_sheet"]]
 
-    sheet = wb[ixtrac_sheet]
-
-    # Validate mapping inputs
     validate_mapping(sheet, mapping)
     cols = resolve_columns(sheet, mapping)
 
-    # =========================
-    # PHASE 1 — ENRICH IX TRAC
-    # =========================
+    decisions = []
+
+    # =================================================
+    # RECONCILIATION LOOP
+    # =================================================
     for r in range(2, sheet.max_row + 1):
         name = sheet.cell(r, cols["name"]).value
         chn = sheet.cell(r, cols["chn"]).value
 
-        membercode = ""
-        status = STATUS_NOT_FOUND
+        decision = match_row(
+            name,
+            chn,
+            exact_index,
+            two_name_index
+        )
 
-        if name and chn:
-            norm = normalize_name(name)
-            matches = exact_index.get((norm, chn), [])
+        sheet.cell(r, cols["membercode"]).value = decision.membercode or ""
+        sheet.cell(r, cols["status"]).value = resolve_display_status(decision)
 
-            valid = []
-            terminal_status = None
+        decisions.append({
+            "ROW": r,
+            "NAME": name,
+            "CHN": chn,
+            "STATUS": decision.status,
+            "DISPLAY_STATUS": resolve_display_status(decision),
+            "MEMBERCODE": decision.membercode,
+            "REASON": decision.reason,
+        })
 
-            # --- Exact match ---
-            for m in matches:
-                ok, reason = validate_membercode(m["MEMBERCODE"])
-                if ok:
-                    valid.append(m)
-                elif terminal_status is None and reason:
-                    terminal_status = reason
-
-            if len(valid) == 1:
-                membercode = valid[0]["MEMBERCODE"]
-                status = STATUS_CONFIRMED
-
-            elif len(valid) > 1:
-                status = STATUS_AMBIGUOUS
-
-            elif terminal_status:
-                status = terminal_status
-
-            else:
-                # --- First two names + CHN ---
-                first2 = first_two_names(name)
-                matches = two_name_index.get((first2, chn), [])
-
-                valid = []
-                terminal_status = None
-
-                for m in matches:
-                    ok, reason = validate_membercode(m["MEMBERCODE"])
-                    if ok:
-                        valid.append(m)
-                    elif terminal_status is None and reason:
-                        terminal_status = reason
-
-                if len(valid) == 1:
-                    membercode = valid[0]["MEMBERCODE"]
-                    status = STATUS_CONFIRMED_2NAME
-
-                elif len(valid) > 1:
-                    status = STATUS_AMBIGUOUS
-
-                elif terminal_status:
-                    status = terminal_status
-
-        sheet.cell(r, cols["membercode"]).value = membercode
-        sheet.cell(r, cols["status"]).value = status
-
-    # Save enriched IX TRAC (no sorting)
+    # SAVE ENRICHED IX TRAC FIRST
     wb.save(output_path)
 
-    # =========================
-    # PHASE 2 — REVIEW + SUMMARY
-    # =========================
-    ix_df = pd.read_excel(output_path, sheet_name=ixtrac_sheet)
+    # =================================================
+    # BUILD REVIEW / SUMMARY DATAFRAMES
+    # =================================================
+    ix_df = pd.read_excel(output_path, sheet_name=mapping["ixtrac_sheet"])
     status_col = mapping["status_out"]
 
-    # --- REVIEW (sorted copy) ---
     review_df = ix_df.copy()
     review_df["__rank"] = review_df[status_col].map(STATUS_PRIORITY)
     review_df = review_df.sort_values("__rank").drop(columns="__rank")
 
-    # --- SUMMARY ---
     summary_df = (
         review_df[status_col]
         .value_counts()
         .reset_index()
-        .rename(columns={
-            "index": "MATCH_STATUS",
-            status_col: "COUNT"
-        })
+        .rename(columns={"index": "STATUS", status_col: "COUNT"})
     )
 
     summary_df.loc[len(summary_df)] = {
-        "MATCH_STATUS": "TOTAL_ROWS",
-        "COUNT": len(review_df)
+        "STATUS": "TOTAL_ROWS",
+        "COUNT": len(review_df),
     }
 
-    # Append sheets safely
-    with pd.ExcelWriter(
-        output_path,
-        engine="openpyxl",
-        mode="a",
-        if_sheet_exists="replace"
-    ) as writer:
-        review_df.to_excel(writer, sheet_name="IX_TRAC_REVIEW", index=False)
-        summary_df.to_excel(writer, sheet_name="RECONCILIATION_SUMMARY", index=False)
+    decision_df = pd.DataFrame(decisions)
+
+    # =================================================
+    # WRITE EXTRA SHEETS (NO pandas.ExcelWriter)
+    # =================================================
+    write_df_to_sheet(wb, "IX_TRAC_REVIEW", review_df)
+    write_df_to_sheet(wb, "RECONCILIATION_SUMMARY", summary_df)
+    write_df_to_sheet(wb, "DECISION_LOG", decision_df)
+    write_df_to_sheet(wb, "CSCS_DUPLICATES", duplicates_df)
+
+    wb.save(output_path)
 
     print("✔ Reconciliation complete")
     print(f"✔ Output written to {output_path}")
