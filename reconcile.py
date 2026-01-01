@@ -15,37 +15,64 @@ from config.rules import (
     STATUS_PRIORITY,
 )
 
-def run_reconciliation(file_path, mapping_name):
+
+def run_reconciliation(file_path: str, mapping_name: str):
+    """
+    Main reconciliation entry point.
+    Uses saved mapping to reconcile CSCS → IX TRAC safely.
+    """
+
+    # =========================
+    # Setup
+    # =========================
     os.makedirs("output", exist_ok=True)
     output_path = "output/IXTRAC_RECONCILED.xlsx"
 
-    # =========================
-    # Load mapping
-    # =========================
     mappings = load_mappings()
     if mapping_name not in mappings:
         raise ValueError(f"Unknown mapping: {mapping_name}")
 
     mapping = mappings[mapping_name]
 
-    cscs_sheet = mapping.get("cscs_sheet") or "CSCS"
+    # Sheets
+    cscs_sheet = mapping.get("cscs_sheet", "CSCS")
     ixtrac_sheet = mapping.get("ixtrac_sheet") or mapping.get("sheet")
 
-    # Load CSCS source
+    # Columns
+    cscs_name_col = mapping.get("cscs_name", "NAME")
+
+    # =========================
+    # Load CSCS (SOURCE)
+    # =========================
     cscs = load_excel(file_path, cscs_sheet)
-    cscs["NORM_NAME"] = cscs["NAME"].apply(normalize_name)
-    cscs["FIRST2"] = cscs["NAME"].apply(first_two_names)
+
+    if cscs_name_col not in cscs.columns:
+        raise ValueError(
+            f"CSCS name column '{cscs_name_col}' not found in sheet '{cscs_sheet}'."
+        )
+
+    cscs["NORM_NAME"] = cscs[cscs_name_col].apply(normalize_name)
+    cscs["FIRST2"] = cscs[cscs_name_col].apply(first_two_names)
 
     exact_index = build_cscs_index(cscs)
     two_name_index = build_cscs_index_2name(cscs)
 
+    # =========================
+    # Load IX TRAC (TARGET)
+    # =========================
     wb = load_workbook(file_path)
+    if ixtrac_sheet not in wb.sheetnames:
+        raise ValueError(f"IX TRAC sheet '{ixtrac_sheet}' not found.")
+
     sheet = wb[ixtrac_sheet]
 
+    # Validate mapping inputs
     validate_mapping(sheet, mapping)
     cols = resolve_columns(sheet, mapping)
 
-
+    # =========================
+    # PHASE 1 — ENRICH IX TRAC
+    # =========================
     for r in range(2, sheet.max_row + 1):
         name = sheet.cell(r, cols["name"]).value
         chn = sheet.cell(r, cols["chn"]).value
@@ -60,6 +87,7 @@ def run_reconciliation(file_path, mapping_name):
             valid = []
             terminal_status = None
 
+            # --- Exact match ---
             for m in matches:
                 ok, reason = validate_membercode(m["MEMBERCODE"])
                 if ok:
@@ -78,7 +106,7 @@ def run_reconciliation(file_path, mapping_name):
                 status = terminal_status
 
             else:
-                # ---- Rule 2: First two names + CHN ----
+                # --- First two names + CHN ---
                 first2 = first_two_names(name)
                 matches = two_name_index.get((first2, chn), [])
 
@@ -105,7 +133,7 @@ def run_reconciliation(file_path, mapping_name):
         sheet.cell(r, cols["membercode"]).value = membercode
         sheet.cell(r, cols["status"]).value = status
 
-    # Save enriched ledger (NO SORTING)
+    # Save enriched IX TRAC (no sorting)
     wb.save(output_path)
 
     # =========================
@@ -129,11 +157,13 @@ def run_reconciliation(file_path, mapping_name):
             status_col: "COUNT"
         })
     )
+
     summary_df.loc[len(summary_df)] = {
         "MATCH_STATUS": "TOTAL_ROWS",
         "COUNT": len(review_df)
     }
 
+    # Append sheets safely
     with pd.ExcelWriter(
         output_path,
         engine="openpyxl",
@@ -142,3 +172,6 @@ def run_reconciliation(file_path, mapping_name):
     ) as writer:
         review_df.to_excel(writer, sheet_name="IX_TRAC_REVIEW", index=False)
         summary_df.to_excel(writer, sheet_name="RECONCILIATION_SUMMARY", index=False)
+
+    print("✔ Reconciliation complete")
+    print(f"✔ Output written to {output_path}")

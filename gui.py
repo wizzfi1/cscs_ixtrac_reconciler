@@ -1,5 +1,6 @@
 import os
 import tkinter as tk
+from tkinter import ttk
 from tkinter import filedialog, messagebox
 from tkinterdnd2 import DND_FILES, TkinterDnD
 
@@ -7,54 +8,80 @@ from reconcile import run_reconciliation
 from core.mapping import load_mappings
 from wizard.wizard import MappingWizard
 
+
+def main():
+    root = TkinterDnD.Tk()
+    root.title("IX TRAC Reconciler")
+    root.geometry("560x360")
+    root.resizable(False, False)
+
+    # =========================
+    # STYLES (AFTER ROOT!)
+    # =========================
+    style = ttk.Style(root)
+    style.theme_use("vista")
+
+    style.configure("Title.TLabel", font=("Segoe UI", 15, "bold"))
+    style.configure("Subtitle.TLabel", font=("Segoe UI", 10), foreground="#555555")
+    style.configure("Primary.TButton", font=("Segoe UI", 10, "bold"), padding=10)
+    style.configure("Secondary.TButton", padding=8)
+    style.configure("Card.TFrame", background="white")
+
+    App(root)
+    root.mainloop()
+
+
 class App:
     def __init__(self, root):
         self.root = root
-        self.root.title("IX TRAC Reconciler")
-        self.root.geometry("520x320")
-        self.root.resizable(False, False)
 
-        self.file_path = tk.StringVar()
+        self.file_path = tk.StringVar(master=root)
         self.mappings = load_mappings()
-        self.mapping_choice = tk.StringVar(value=list(self.mappings.keys())[0])
+        self.mapping_choice = tk.StringVar(
+            master=root,
+            value=list(self.mappings.keys())[0] if self.mappings else ""
+        )
 
-        tk.Label(root, text="CSCS ↔ IX TRAC Reconciliation Tool",
-                 font=("Segoe UI", 12, "bold")).pack(pady=10)
+        card = ttk.Frame(root, style="Card.TFrame", padding=20)
+        card.pack(fill="both", expand=True, padx=20, pady=20)
 
-        frame = tk.Frame(root)
-        frame.pack()
+        ttk.Label(card, text="CSCS ↔ IX TRAC Reconciliation Tool", style="Title.TLabel").pack(anchor="w")
+        ttk.Label(card, text="Select an Excel file and mapping template.", style="Subtitle.TLabel").pack(anchor="w", pady=(0, 20))
 
-        tk.Entry(frame, textvariable=self.file_path, width=45).pack(side=tk.LEFT, padx=5)
-        tk.Button(frame, text="Browse", command=self.browse).pack(side=tk.LEFT)
+        row = ttk.Frame(card)
+        row.pack(fill="x", pady=(0, 15))
 
-        tk.Label(root, text="Select Template").pack(pady=5)
+        ttk.Entry(row, textvariable=self.file_path, width=45).pack(side="left", padx=(0, 8))
+        ttk.Button(row, text="Browse", command=self.browse).pack(side="left")
 
-        self.mapping_menu = tk.OptionMenu(root, self.mapping_choice, *self.mappings.keys())
-        self.mapping_menu.pack()
+        ttk.Label(card, text="Select Template", style="Subtitle.TLabel").pack(anchor="w")
+        self.mapping_menu = ttk.Combobox(card, textvariable=self.mapping_choice, values=list(self.mappings.keys()), state="readonly", width=38)
+        self.mapping_menu.pack(anchor="w", pady=(5, 10))
 
-        tk.Button(
-            root,
-            text="Add New File Format",
-            command=self.open_mapping_wizard,
-            width=25
-        ).pack(pady=5)
+        ttk.Button(card, text="Add New File Format", command=self.open_mapping_wizard).pack(anchor="w", pady=(0, 15))
 
-        tk.Label(root, text="Drag & drop Excel file here").pack(pady=5)
+        ttk.Label(card, text="Drag & drop Excel file here", style="Subtitle.TLabel").pack(pady=(0, 15))
 
-        tk.Button(root, text="Run Reconciliation",
-                  command=self.run, bg="#0078D4", fg="white", width=25).pack(pady=15)
+        ttk.Button(
+            card,
+            text="Run Reconciliation",
+            command=self.run,
+            width=24
+        ).pack(pady=(10, 0))
+
+
 
         root.drop_target_register(DND_FILES)
         root.dnd_bind("<<Drop>>", self.drop)
 
     def browse(self):
-        f = filedialog.askopenfilename(filetypes=[("Excel files", "*.xlsx")])
+        f = filedialog.askopenfilename(parent=self.root, filetypes=[("Excel files", "*.xlsx")])
         if f:
             self.file_path.set(f)
 
     def drop(self, event):
-        f = event.data.strip("{}")
-        if f.endswith(".xlsx"):
+        f = event.data.strip().strip("{}").strip('"')
+        if f.lower().endswith(".xlsx") and os.path.exists(f):
             self.file_path.set(f)
 
     def open_mapping_wizard(self):
@@ -64,34 +91,18 @@ class App:
 
     def reload_mappings(self):
         self.mappings = load_mappings()
-
-        menu = self.mapping_menu["menu"]
-        menu.delete(0, "end")
-
-        for name in self.mappings.keys():
-            menu.add_command(
-                label=name,
-                command=lambda v=name: self.mapping_choice.set(v)
-            )
-
-        if self.mappings:
-            self.mapping_choice.set(list(self.mappings.keys())[0])
+        values = list(self.mappings.keys())
+        self.mapping_menu["values"] = values
+        if values:
+            self.mapping_choice.set(values[0])
 
     def run(self):
-        file = self.file_path.get()
-        if not os.path.exists(file):
-            messagebox.showerror("Error", "Invalid Excel file.")
+        if not os.path.exists(self.file_path.get()):
+            messagebox.showerror("Error", "Invalid Excel file.", parent=self.root)
             return
-        try:
-            run_reconciliation(file, self.mapping_choice.get())
-            messagebox.showinfo("Success", "Reconciliation completed.\nOutput saved to /output")
-        except Exception as e:
-            messagebox.showerror("Error", str(e))
+        run_reconciliation(self.file_path.get(), self.mapping_choice.get())
+        messagebox.showinfo("Success", "Reconciliation completed.", parent=self.root)
 
-def main():
-    root = TkinterDnD.Tk()
-    App(root)
-    root.mainloop()
 
 if __name__ == "__main__":
     main()
